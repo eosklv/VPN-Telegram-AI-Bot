@@ -84,6 +84,14 @@ Anything else can be written in plain words: *"spin up a VPN in Yandex that work
 
 WireGuard creates a profile per device (`phone` and `laptop` by default, see the `wireguard_peers` variable), since one WireGuard key cannot be used by two devices at the same time.
 
+### Notifications
+
+You do not have to poll `status` after `deploy`:
+
+- when a new server has uploaded its profiles, it adds a `ready` marker to `profiles/<cloud>/`, the bucket notifies the bot's Lambda, and the bot sends the profile links and QR codes to every allowed chat;
+- if the server was already running and nothing changed, the workflow says so right away;
+- if a deploy or destroy job fails, the workflow sends the link to the run, and `/why` explains the reason.
+
 ## Architecture
 
 ```mermaid

@@ -445,6 +445,46 @@ class ExplainFailureTest(HandlerTestCase):
         self.assertEqual(self.http.texts(), ["The last job did not fail.\nLast job: apply wireguard in aws\nState: success"])
 
 
+class ReadyNotificationTest(HandlerTestCase):
+    def s3_event(self, *keys):
+        records = [{"eventSource": "aws:s3", "s3": {"object": {"key": key}}} for key in keys]
+        return handler.handler({"Records": records}, None)
+
+    def test_ready_marker_sends_the_profiles_of_that_cloud(self):
+        self.assertEqual(self.s3_event("profiles/aws/ready"), {"statusCode": 200})
+        self.assertEqual(self.http.texts(), ["The VPN server in AWS Stockholm is ready."])
+        self.assertEqual(self.send_profiles.call_args_list, [mock.call(CHAT_ID, clouds={"aws"})])
+
+    def test_other_objects_do_not_notify(self):
+        self.s3_event("profiles/aws/phone.conf", "profiles/aws/phone.png", "profiles/gcp/ready", "terraform/ready")
+        self.assertEqual(self.http.texts(), [])
+        self.send_profiles.assert_not_called()
+
+    def test_every_allowed_chat_is_notified(self):
+        with mock.patch.object(handler, "ALLOWED_CHAT_IDS", {42, 7}):
+            self.s3_event("profiles/yandex/ready")
+        self.assertEqual(
+            self.send_profiles.call_args_list,
+            [mock.call(7, clouds={"yandex"}), mock.call(42, clouds={"yandex"})],
+        )
+
+
+class SendProfilesTest(unittest.TestCase):
+    def test_only_the_requested_cloud_is_sent(self):
+        keys = ["profiles/aws/phone.conf", "profiles/aws/ready", "profiles/yandex/client.ovpn", "profiles/yandex/ready"]
+        http = FakeHttp()
+        listing = {"Contents": [{"Key": k} for k in keys]}
+        with mock.patch.object(handler, "http_request", http), \
+                mock.patch.object(handler.S3_CLIENT, "list_objects_v2", return_value=listing), \
+                mock.patch.object(handler.S3_CLIENT, "generate_presigned_url", return_value="https://s3/link"):
+            handler.send_profiles(CHAT_ID, clouds={"yandex"})
+        texts = http.texts()
+        self.assertEqual(len(texts), 1)
+        self.assertIn("Yandex Cloud", texts[0])
+        self.assertIn("client.ovpn", texts[0])
+        self.assertNotIn("ready", texts[0])
+
+
 class AwsLabelTest(unittest.TestCase):
     def test_label_follows_the_region(self):
         self.assertEqual(handler.CLOUDS["aws"], "AWS Stockholm")

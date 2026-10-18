@@ -211,7 +211,7 @@ resource "aws_iam_role" "github" {
 data "aws_iam_policy_document" "github" {
   statement {
     sid       = "Bucket"
-    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
+    actions   = ["s3:ListBucket", "s3:GetBucketLocation", "s3:GetBucketNotification", "s3:PutBucketNotification"]
     resources = [local.bucket_arn]
   }
 

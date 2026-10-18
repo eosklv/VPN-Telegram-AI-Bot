@@ -199,3 +199,27 @@ resource "aws_lambda_permission" "api" {
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.bot.execution_arn}/*/*/tgbot"
 }
+
+# A server uploads a ready marker after its profiles, the bot then sends them to the chat
+
+resource "aws_lambda_permission" "s3" {
+  statement_id   = "AllowS3Invoke"
+  action         = "lambda:InvokeFunction"
+  function_name  = aws_lambda_function.bot.function_name
+  principal      = "s3.amazonaws.com"
+  source_arn     = "arn:aws:s3:::${var.profile_bucket}"
+  source_account = data.aws_caller_identity.current.account_id
+}
+
+resource "aws_s3_bucket_notification" "profiles_ready" {
+  bucket = var.profile_bucket
+
+  lambda_function {
+    lambda_function_arn = aws_lambda_function.bot.arn
+    events              = ["s3:ObjectCreated:*"]
+    filter_prefix       = var.profile_prefix
+    filter_suffix       = "/ready"
+  }
+
+  depends_on = [aws_lambda_permission.s3]
+}

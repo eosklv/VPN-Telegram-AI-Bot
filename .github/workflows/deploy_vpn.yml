@@ -95,12 +95,30 @@ jobs:
         run: terraform -chdir="${TF_DIR}" plan -input=false -out=tfplan ${{ inputs.action == 'destroy' && '-destroy' || '' }}
       # A new server uploads new profiles, the old ones must not be offered by the bot meanwhile
       - name: Remove outdated client profiles
+        id: server
         run: |
           changes=$(terraform -chdir="${TF_DIR}" show -json tfplan | jq '[.resource_changes[]?
             | select(.type | test("_instance$"))
             | select(.change.actions | index("create") or index("delete"))] | length')
+          echo "changed=$([ "${changes}" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           if [ "${changes}" -gt 0 ]; then
             aws s3 rm --recursive "s3://${{ vars.S3_BUCKET }}/${PROFILE_PREFIX}"
           fi
       - name: Terraform ${{ inputs.action }}
         run: terraform -chdir="${TF_DIR}" apply -input=false tfplan
+      # A new server reports itself through the bot once its profiles are uploaded;
+      # an unchanged one does not, so the chat is told right away
+      - name: Report the running server
+        if: inputs.action == 'apply' && steps.server.outputs.changed == 'false'
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_IDS: ${{ vars.TELEGRAM_ALLOWED_CHAT_IDS }}
+          TEXT: The VPN server in ${{ inputs.cloud == 'aws' && 'AWS' || 'Yandex Cloud' }} is already running, send status to get its profiles.
+        run: .github/scripts/notify.sh
+      - name: Report the failure
+        if: failure()
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_IDS: ${{ vars.TELEGRAM_ALLOWED_CHAT_IDS }}
+          TEXT: "The job failed: ${{ inputs.action }} in ${{ inputs.cloud == 'aws' && 'AWS' || 'Yandex Cloud' }}. Send /why to see the reason or open ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        run: .github/scripts/notify.sh
