@@ -75,6 +75,7 @@ BUTTON_COMMANDS = {label: command for row in KEYBOARD_ROWS for label, command in
 # Exact button and menu texts are handled without the LLM
 DIRECT_TEXTS = set(BUTTON_COMMANDS.values()) | {"start", "hi"}
 LINK_TTL = 300
+READY_MARKER = "ready"
 CONFIRM_TTL = 600
 LOG_TAIL_CHARS = 12000
 
@@ -280,11 +281,13 @@ def presign(key, **response):
     return S3_CLIENT.generate_presigned_url("get_object", Params=params, ExpiresIn=LINK_TTL)
 
 
-def send_profiles(chat_id, links=True, qr_codes=True):
+def send_profiles(chat_id, links=True, qr_codes=True, clouds=None):
     res = S3_CLIENT.list_objects_v2(Bucket=S3_BUCKET, Prefix=S3_PROFILE_PREFIX)
     keys = sorted(obj["Key"] for obj in res.get("Contents", []))
     found_profiles = sent = False
     for cloud, title in CLOUDS.items():
+        if clouds and cloud not in clouds:
+            continue
         prefix = f"{S3_PROFILE_PREFIX}{cloud}/"
         files = [k.removeprefix(prefix) for k in keys if k.startswith(prefix)]
         profiles = [f for f in files if f.endswith(PROFILE_EXTENSIONS)]
@@ -463,7 +466,34 @@ def handle_callback(query):
         telegram("editMessageText", chat_id=chat_id, message_id=message_id, text="Cancelled.")
 
 
+def ready_clouds(event):
+    clouds = set()
+    for record in event.get("Records", []):
+        if record.get("eventSource") != "aws:s3":
+            continue
+        key = urllib.parse.unquote_plus(record["s3"]["object"]["key"])
+        cloud, _, name = key.removeprefix(S3_PROFILE_PREFIX).partition("/")
+        if name == READY_MARKER and cloud in CLOUDS:
+            clouds.add(cloud)
+    return clouds
+
+
+def notify_ready(clouds):
+    for cloud in sorted(clouds):
+        for chat_id in sorted(ALLOWED_CHAT_IDS):
+            send_message(chat_id, f"The VPN server in {CLOUDS[cloud]} is ready.")
+            send_profiles(chat_id, clouds={cloud})
+
+
 def handler(event, context):
+    # Invoked by the bucket notification when a server has uploaded its profiles
+    if "Records" in event:
+        try:
+            notify_ready(ready_clouds(event))
+        except Exception:
+            logger.exception("Failed to send the ready notification")
+        return {"statusCode": 200}
+
     headers = event.get("headers") or {}
     if not hmac.compare_digest(headers.get("x-telegram-bot-api-secret-token", ""), WEBHOOK_SECRET):
         logger.warning("Rejected a request without a valid webhook secret")

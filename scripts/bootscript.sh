@@ -108,6 +108,11 @@ upload_profiles() {
         curl -fsS --retry 5 --retry-all-errors -K "${VPN_DIR}/upload.curlrc" -F "file=@${file}" > /dev/null
         echo "Uploaded $(basename "${file}")"
     done
+
+    # Uploaded last: the bucket notifies the bot about this marker, see terraform/bot
+    date -u +%Y-%m-%dT%H:%M:%SZ > "${VPN_DIR}/ready"
+    curl -fsS --retry 5 --retry-all-errors -K "${VPN_DIR}/upload.curlrc" -F "file=@${VPN_DIR}/ready" > /dev/null
+    echo "Uploaded the ready marker"
 }
 
 apt-get update
