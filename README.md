@@ -46,7 +46,7 @@ Technically, the process is structured as follows:
 
 When receiving a new message, Telegram calls a webhook configured in AWS API Gateway which launches a handler function in AWS Lambda. The webhook is protected with a secret token, and the bot only talks to allowed chat IDs. The function and the API are deployed with Terraform by GitHub Actions.
 
-Depending on the selected action the bot will respond and launch the `deploy_vpn.yml` workflow in GitHub Actions with the target cloud and protocol. Before applying, the workflow generates a temporary presigned S3 POST that allows uploading files only under `profiles/<cloud>/`. Terraform creates the server with a static public IP and passes the bootstrap script, VPN configs and the upload credentials in the server's user data as a [cloud-init](https://cloud-init.io/) config (cloud-init is the standard first-boot initialization tool of cloud Linux images; the config is rendered by the `terraform/modules/cloud-init` module), so the server needs no cloud credentials at all. The script installs WireGuard (keys and a QR code per client) or OpenVPN (Certification Authority and certificates), configures IP forwarding and the firewall, builds client profiles and uploads them to S3. Download links (temporary S3 presigned URLs) and QR codes are sent to the user by the Telegram bot.
+Depending on the selected action the bot will respond and launch the `deploy_vpn.yml` workflow in GitHub Actions with the target cloud and protocol. Before applying, the workflow generates a temporary presigned S3 POST that allows uploading files only under `profiles/<cloud>/`. Terraform creates the server with a static public IP and passes the bootstrap script, VPN configs and the upload credentials in the server's user data as a [cloud-init](https://cloud-init.io/) config (cloud-init is the standard first-boot initialization tool of cloud Linux images; the config is rendered by the `terraform/modules/cloud-init` module), so the server needs no cloud credentials at all. The script installs WireGuard (keys and a QR code per client) or OpenVPN (Certification Authority and certificates), configures IP forwarding and the firewall, builds client profiles and uploads them to S3, followed by a `ready` marker. The marker triggers an S3 event notification to the bot, which sends the download links (temporary S3 presigned URLs) and QR codes to the chat without being asked.
 
 ## Bot commands
 
@@ -117,8 +117,9 @@ flowchart TD
     tf -.-> ycvm
     ec2 -->|"cloud-init: WireGuard / OpenVPN<br/>profiles + QR via presigned POST"| s3[("S3<br/>Terraform state + profiles")]
     ycvm -.-> s3
-    s3 -->|"presigned links"| bot
-    bot -->|"replies"| tg
+    s3 -->|"ready marker → S3 event<br/>presigned links"| bot
+    bot -->|"replies, ready notification"| tg
+    gha -->|"failed / destroyed /<br/>already running"| tg
 ```
 
 ## Repository layout
@@ -128,10 +129,13 @@ flowchart TD
 | `terraform/bootstrap` | State bucket, GitHub OIDC provider and role, applied locally (state key `bootstrap/terraform.tfstate`) |
 | `terraform/aws` | VPN server in AWS (state key `terraform/terraform.tfstate`) |
 | `terraform/yandex` | VPN server in Yandex Cloud (state key `terraform/yandex.tfstate`) |
-| `terraform/bot` | Telegram bot: Lambda, HTTP API, IAM (state key `terraform/bot.tfstate`) |
+| `terraform/bot` | Telegram bot: Lambda, HTTP API, IAM, S3 notification for the `ready` marker (state key `terraform/bot.tfstate`) |
 | `terraform/modules/cloud-init` | Renders the cloud-init config (bootstrap script, VPN configs, upload credentials) shared by both clouds |
 | `scripts/setup.sh` | One-time setup of a copy of the repository: bootstrap, repository variables and secrets, bot deployment |
 | `scripts/bootscript.sh`, `configs/` | Server bootstrap, WireGuard and OpenVPN configs |
+| `telegram/` | The bot's Lambda handler (`handler.py`) and its offline tests (`tests/`) |
+| `.github/workflows` | `deploy_vpn.yml` creates or destroys the server, `deploy_bot.yml` deploys the bot and registers its webhook and menu |
+| `.github/scripts` | `presign_post.py` issues the upload credentials for the server, `notify.sh` sends the workflow's messages to the chat |
 
 All states are stored in the same S3 bucket; the bucket and region are passed with `-backend-config`:
 
@@ -140,6 +144,14 @@ terraform -chdir=terraform/aws init -backend-config="bucket=<bucket>" -backend-c
 ```
 
 The bot, the VPN server and the bucket share one AWS region, the `AWS_REGION` repository variable. The bot names AWS servers after it (`eu-north-1` is *AWS Stockholm*, `us-east-1` is *AWS N. Virginia*); the optional `AWS_LOCATION` variable overrides the name.
+
+## Tests
+
+The bot's tests run offline, with Bedrock, S3, Telegram and GitHub mocked, so no credentials or packages are needed (Python 3.9+):
+
+```bash
+python3 -m unittest discover -s telegram/tests -v
+```
 
 ## Setup
 
@@ -174,7 +186,7 @@ At about 2,000 input and 300 output tokens per message, the model costs a small 
 
 - the S3 bucket: versioning, SSE-S3 encryption with SSE-C blocked, public access block, TLS-only bucket policy, lifecycle that keeps the last 5 old versions of every file and expires older ones after 30 days, and expires old versions of deleted client profiles after 1 day;
 - the GitHub OIDC provider and the `GH_ROLE` role. An account can have only one GitHub OIDC provider, so an existing one is reused through `github_oidc_provider_arn` (`scripts/setup.sh` finds it). The role trusts only the `main` branch of this repository by GitHub's immutable OIDC subject, which includes the owner and repository IDs, so a repository recreated under the same name cannot assume it (repositories created before July 2026 may still issue the old `repo:<owner>/<repo>` subject, see `github_immutable_subject`). After a rename update `github_owner` / `github_repository`;
-- a least-privilege inline policy of the role: the Terraform states and their locks, `profiles/`, the VPN server in EC2, and the bot's Lambda, HTTP API, log group and IAM role;
+- a least-privilege inline policy of the role: the Terraform states and their locks, `profiles/`, the bucket notification, the VPN server in EC2, and the bot's Lambda, HTTP API, log group and IAM role;
 - the permissions boundary of the bot's Lambda role. The GitHub role can write the bot role's policies only while this boundary is set, so it cannot grant itself more through the bot. Besides the logs and the profiles, the boundary allows invoking Amazon Nova models in Bedrock.
 
 The settings live in `terraform/bootstrap/terraform.tfvars` (git-ignored, see `terraform.tfvars.example`), which `scripts/setup.sh` writes. The state is kept under `bootstrap/` in the bucket, out of the GitHub role's reach. Since the bucket does not exist before the first apply, that apply runs with a local state, which is then moved into the bucket; this is what the script does:
