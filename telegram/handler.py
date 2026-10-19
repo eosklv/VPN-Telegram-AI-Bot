@@ -336,7 +336,7 @@ def run_workflow(chat_id, action, cloud, protocol):
     rc = gh_dispatch(action, cloud, protocol)
     if rc == 204:
         what = f"{action} {protocol}" if action == "apply" else action
-        send_message(chat_id, f"The job is launched ({what} in {CLOUDS[cloud]}), please track the status.")
+        send_message(chat_id, f"The job is launched ({what} in {CLOUDS[cloud]}), please wait.")
     else:
         send_message(chat_id, f"Cannot call GitHub, response code: {rc}. Please check the logs.")
 
