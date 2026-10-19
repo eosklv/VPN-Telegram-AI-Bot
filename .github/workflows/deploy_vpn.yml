@@ -115,6 +115,20 @@ jobs:
           CHAT_IDS: ${{ vars.TELEGRAM_ALLOWED_CHAT_IDS }}
           TEXT: The VPN server in ${{ inputs.cloud == 'aws' && 'AWS' || 'Yandex Cloud' }} is already running, send status to get its profiles.
         run: .github/scripts/notify.sh
+      - name: Report the destroyed server
+        if: inputs.action == 'destroy'
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_IDS: ${{ vars.TELEGRAM_ALLOWED_CHAT_IDS }}
+          CLOUD: ${{ inputs.cloud == 'aws' && 'AWS' || 'Yandex Cloud' }}
+          DESTROYED: ${{ steps.server.outputs.changed }}
+        run: |
+          if [ "${DESTROYED}" = true ]; then
+            export TEXT="The VPN server in ${CLOUD} is destroyed."
+          else
+            export TEXT="There was no VPN server in ${CLOUD} to destroy."
+          fi
+          .github/scripts/notify.sh
       - name: Report the failure
         if: failure()
         env:

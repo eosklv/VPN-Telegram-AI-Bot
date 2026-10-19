@@ -90,6 +90,7 @@ You do not have to poll `status` after `deploy`:
 
 - when a new server has uploaded its profiles, it adds a `ready` marker to `profiles/<cloud>/`, the bucket notifies the bot's Lambda, and the bot sends the profile links and QR codes to every allowed chat;
 - if the server was already running and nothing changed, the workflow says so right away;
+- after `destroy` the workflow confirms that the server is gone (or that there was none);
 - if a deploy or destroy job fails, the workflow sends the link to the run, and `/why` explains the reason.
 
 ## Architecture
