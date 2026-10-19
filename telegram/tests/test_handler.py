@@ -343,7 +343,7 @@ class ConfirmationTest(HandlerTestCase):
         edits = self.http.telegram("editMessageText")
         self.assertEqual(edits[0]["text"], "Deploy OpenVPN in Yandex Cloud: confirmed.")
         self.assertNotIn("reply_markup", edits[0])
-        self.assertEqual(self.http.texts(), ["The job is launched (apply openvpn in Yandex Cloud), please track the status."])
+        self.assertEqual(self.http.texts(), ["The job is launched (apply openvpn in Yandex Cloud), please wait."])
 
     def test_cancel_does_not_dispatch(self):
         self.callback("cancel")
