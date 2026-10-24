@@ -210,6 +210,8 @@ GitHub Actions authenticates in Yandex Cloud with [Workload Identity Federation]
 3. Link the service account to the federation with the subject the repository issues, `repo:<github_owner>@<owner_id>/<repository>@<repository_id>:ref:refs/heads/main` (`gh api repos/<owner>/<repo>/actions/oidc/customization/sub` shows the prefix).
 4. Set `YC_SA_ID`, `YC_CLOUD_ID` and `YC_FOLDER_ID` variables in the repository.
 
+The server is created in the `ru-central1-d` zone, the `zone` variable of `terraform/yandex`. If Yandex Cloud restricts a zone (`Resource allocation is restricted` or `Zone … is not available` when the VM is created), switch the variable to another zone; the next deploy moves the zonal resources there.
+
 ## Versions
 
 - [v1.0](https://github.com/eosklv/VPN-Telegram-AI-Bot/releases/tag/v1.0) — the original version: OpenVPN in AWS only, Telegram bot deployed with Serverless Framework.
